@@ -63,6 +63,8 @@ protected:
       size_t count; // cell.data.count
       size_t width; // cell.data.width
       float *data; // cell.data.data
+      float minimum; // cell.data.minimum
+      float maximum; // cell.data.maximum
     } data; // cell.data
   } cell;
 };

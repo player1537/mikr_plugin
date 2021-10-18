@@ -92,7 +92,8 @@ class Mikr:
         assert self.timestep is not None
         NP = len(self.points)
         plookup: Dict[PointID, int] = {}
-        vertex_position = -373737 * np.ones((NP, 3), dtype='float32')
+        vertex_position = np.ones((NP, 3), dtype='float32')
+        vertex_position[:] *= -373737
         for pid, point in self.points.items():
             plookup.setdefault(pid, len(plookup))
             vertex_position[plookup[pid], :] = point.x, point.y, point.z
@@ -100,28 +101,32 @@ class Mikr:
 
         NB = len(self.boxes)
         blookup: Dict[BoxID, int] = {}
-        index = -373737 * np.ones((NB, 8), dtype='uint32')
+        index = np.ones((NB, 8), dtype='int32')
+        index[:] *= -373737
         for bid, box in self.boxes.items():
             blookup.setdefault(bid, len(blookup))
             index[blookup[bid], :] = (
                 # four bottom vertices counterclockwise
-                box.x0y0z0,
-                box.x0y1z0,
-                box.x1y1z0,
-                box.x1y0z0,
+                plookup[box.x0y0z0],
+                plookup[box.x1y0z0],
+                plookup[box.x1y1z0],
+                plookup[box.x0y1z0],
                 # four top vertices counterclockwise
-                box.x0y0z1,
-                box.x0y1z1,
-                box.x1y1z1,
-                box.x1y0z1,
+                plookup[box.x0y0z1],
+                plookup[box.x1y0z1],
+                plookup[box.x1y1z1],
+                plookup[box.x0y1z1],
             )
         assert -373737 not in index
 
         cell_index = np.arange(0, NB, dtype='uint32').reshape((NB, 1))
+        cell_index[:] *= 8
 
-        cell_type = 12 * np.ones((NB, 1), dtype='uint8')
+        cell_type = np.ones((NB, 1), dtype='uint8')
+        cell_type[:] *= 12
 
-        cell_data = -373737 * np.ones((NB, 1), dtype='float32')
+        cell_data = np.ones((NB, 1), dtype='float32')
+        cell_data[:] *= -373737
         for bid, stress in self.stresses.items():
             if (i := blookup.get(bid, None)) is None:
                 print(f'{bid=} not in blookup', file=sys.stderr)
@@ -135,13 +140,21 @@ class Mikr:
         for i, j in it:
             assert cell_data[i] == cell_data[j], f'{i} {j} {cell_data[i]=} {cell_data[j]=}'
         
+        cutoff = 10
+        
         print(f'Cutting off {NB-cutoff} elements', file=sys.stderr)
         index = index[:cutoff, :]
         cell_index = cell_index[:cutoff, :]
         cell_type = cell_type[:cutoff, :]
         cell_data = cell_data[:cutoff, :]
             
+        assert -373737 not in vertex_position, f'{np.where(vertex_position == -373737)}'
+        assert -373737 not in index, f'{np.where(index == -373737)}'
+        assert -373737 not in cell_index, f'{np.where(cell_index == -373737)}'
+        assert -373737 not in cell_type, f'{np.where(cell_type == -373737)}'
         assert -373737 not in cell_data, f'{np.where(cell_data == -373737)}'
+
+        print(f'{index=}', file=sys.stderr)
 
         return vertex_position, index, cell_index, cell_type, cell_data
 
@@ -375,6 +388,7 @@ def main(root):
             write('@n', NP)
             write('@n', NB)
             for arr in (vertex_position, index, cell_index, cell_type, cell_data):
+                print(f'{arr.dtype=}', file=sys.stderr)
                 write('@n', arr.nbytes)
                 write(f'{arr.nbytes}s', arr.tobytes())
             stdout.flush()

@@ -3,7 +3,7 @@
 
 #include "PanelMikr.h"
 
-#include "sg/visitors/GenerateImGuiWidgets.h"
+#include "sg/visitors/PrintNodes.h"
 
 #include "imgui.h"
 
@@ -178,13 +178,31 @@ void PanelMikr::transferFromCoProcess() {
   nread = fread(cell.data.data, 1, temp, coprocess.stdout);
   D(nread);
   std::fprintf(stderr, "Read cell.data\n");
+
+  cell.data.minimum = cell.data.data[0];
+  cell.data.maximum = cell.data.data[0];
+  for (size_t i=0; i<cell.data.count; ++i) {
+    if (cell.data.data[i] < cell.data.minimum) {
+      cell.data.minimum = cell.data.data[i];
+    }
+    if (cell.data.data[i] > cell.data.maximum) {
+      cell.data.maximum = cell.data.data[i];
+    }
+  }
+  cell.data.minimum -= 1.0f;
+  cell.data.maximum += 1.0f;
 }
 
 void PanelMikr::createGeometry() {
   std::fprintf(stderr, "Create\n");
 
-  auto &xfm = context->frame->createChild("xfm", "transform");
-  auto &vol = xfm.createChild("mikr", "volume_unstructured");
+  auto &world = context->frame->child("world");
+  auto &xfm = world.createChild("xfm", "transform");
+  auto &tfn = xfm.createChild("transferFunction", "transfer_function_viridis");
+  tfn["valueRange"] = vec2f(cell.data.minimum, cell.data.maximum);
+  auto &vol = tfn.createChild("mikr", "volume_unstructured");
+  vol["valueRange"] = range1f(cell.data.minimum, cell.data.maximum);
+  vol.child("valueRange").setSGOnly();
   D(vertex.position.count);
   D(vertex.position.width);
   D(index.count);
@@ -211,6 +229,12 @@ void PanelMikr::createGeometry() {
   vol.createChildData("cell.data",
                       vec2ul(cell.data.count, cell.data.width),
                       cell.data.data);
+
+  vol.commit();
+  tfn.commit();
+  xfm.commit();
+  world.commit();
+  context->frame->traverse<sg::PrintNodes>();
 }
 
 void PanelMikr::stopCoProcess() {
