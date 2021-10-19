@@ -39,6 +39,8 @@ protected:
       size_t count; // vertex.position.count
       size_t width; // vertex.position.width
       vec3f *data; // vertex.position.data
+      vec3f minimum; // vertex.position.minimum
+      vec3f maximum; // vertex.position.maximum
     } position; // vertex.position
   } vertex;
 

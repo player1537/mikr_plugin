@@ -140,8 +140,6 @@ class Mikr:
         for i, j in it:
             assert cell_data[i] == cell_data[j], f'{i} {j} {cell_data[i]=} {cell_data[j]=}'
         
-        cutoff = 10
-        
         print(f'Cutting off {NB-cutoff} elements', file=sys.stderr)
         index = index[:cutoff, :]
         cell_index = cell_index[:cutoff, :]
@@ -153,8 +151,6 @@ class Mikr:
         assert -373737 not in cell_index, f'{np.where(cell_index == -373737)}'
         assert -373737 not in cell_type, f'{np.where(cell_type == -373737)}'
         assert -373737 not in cell_data, f'{np.where(cell_data == -373737)}'
-
-        print(f'{index=}', file=sys.stderr)
 
         return vertex_position, index, cell_index, cell_type, cell_data
 

@@ -142,7 +142,7 @@ void PanelMikr::transferFromCoProcess() {
   fread(&temp, sizeof(temp), 1, coprocess.stdout);
   D(temp);
   assert(temp >= 0);
-  vertex.position.data = (vec3f *)std::malloc(temp);
+  vertex.position.data = (vec3f *)std::malloc(2 * temp);
   nread = fread(vertex.position.data, 1, temp, coprocess.stdout);
   D(nread);
   std::fprintf(stderr, "Read vertex.position\n");
@@ -150,7 +150,7 @@ void PanelMikr::transferFromCoProcess() {
   fread(&temp, sizeof(temp), 1, coprocess.stdout);
   D(temp);
   assert(temp >= 0);
-  index.data = (uint32_t *)std::malloc(temp);
+  index.data = (uint32_t *)std::malloc(2 * temp);
   nread = fread(index.data, 1, temp, coprocess.stdout);
   D(nread);
   std::fprintf(stderr, "Read index\n");
@@ -158,7 +158,7 @@ void PanelMikr::transferFromCoProcess() {
   fread(&temp, sizeof(temp), 1, coprocess.stdout);
   D(temp);
   assert(temp >= 0);
-  cell.index.data = (uint32_t *)std::malloc(temp);
+  cell.index.data = (uint32_t *)std::malloc(2 * temp);
   nread = fread(cell.index.data, 1, temp, coprocess.stdout);
   D(nread);
   std::fprintf(stderr, "Read cell.index\n");
@@ -166,7 +166,7 @@ void PanelMikr::transferFromCoProcess() {
   fread(&temp, sizeof(temp), 1, coprocess.stdout);
   D(temp);
   assert(temp >= 0);
-  cell.type.data = (uint8_t *)std::malloc(temp);
+  cell.type.data = (uint8_t *)std::malloc(2 * temp);
   nread = fread(cell.type.data, 1, temp, coprocess.stdout);
   D(nread);
   std::fprintf(stderr, "Read cell.type\n");
@@ -174,10 +174,23 @@ void PanelMikr::transferFromCoProcess() {
   fread(&temp, sizeof(temp), 1, coprocess.stdout);
   D(temp);
   assert(temp >= 0);
-  cell.data.data = (float *)std::malloc(temp);
+  cell.data.data = (float *)std::malloc(2 * temp);
   nread = fread(cell.data.data, 1, temp, coprocess.stdout);
   D(nread);
   std::fprintf(stderr, "Read cell.data\n");
+
+  vertex.position.minimum = position.data.data[0];
+  vertex.position.maximum = position.data.data[0];
+  for (size_t i=0; i<vertex.position.count; ++i) {
+    if (vertex.position.data[i] < vertex.position.minimum) {
+      vertex.position.minimum = vertex.position.data[i];
+    }
+    if (vertex.position.data[i] > vertex.position.maximum) {
+      vertex.position.maximum = vertex.position.data[i];
+    }
+  }
+  vertex.position.minumum -= vec3f(1.0f);
+  vertex.position.maximum += vec3f(1.0f);
 
   cell.data.minimum = cell.data.data[0];
   cell.data.maximum = cell.data.data[0];
@@ -235,6 +248,13 @@ void PanelMikr::createGeometry() {
   xfm.commit();
   world.commit();
   context->frame->traverse<sg::PrintNodes>();
+
+  auto &cam = context->frame->child("camera");
+  cam["position"] = 2.0f * vertex.position.maximum;
+  cam["direction"] = -2.0f * vertex.position.maximum;
+  cam["up"] = vec3f(0.0f, 1.0f, 0.0f);
+
+  context->refreshScene(false);
 }
 
 void PanelMikr::stopCoProcess() {
