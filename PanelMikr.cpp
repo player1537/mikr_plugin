@@ -21,19 +21,19 @@ namespace ImGui {
 namespace ospray {
 namespace mikr_plugin {
 
-#define D(x) std::cerr << #x": " << (x) << std::endl
-
 PanelMikr::PanelMikr(std::shared_ptr<StudioContext> _context)
     : Panel("Mikr Panel", _context)
 {
   ui.coprocess.state = ui.coprocess.INITED;
-  ui.geometry.mode = ui.geometry.SEPARATE_WORLDS;
+  ui.geometry.mode = ui.geometry.SAME_WORLD;
+  ui.tfn.mode = ui.tfn.SAME_TRANSFER_FUNCTION;
   ui.timestep.index.current = 0;
   ui.timestep.index.previous = 0;
   ui.animation.mode = ui.animation.STOPPED;
   ui.animation.fps = 10;
   ui.animation.time.current = clock::now();
   ui.animation.time.previous = ui.animation.time.current;
+  ui.animation.time.waitingForFinishedFrame = false;
   coprocess.pid = 0;
   coprocess.stdin = nullptr;
   coprocess.stdout = nullptr;
@@ -54,10 +54,19 @@ void PanelMikr::buildUI(void *ImGuiCtx)
   ImGui::PushEnabled(ui.coprocess.state == ui.coprocess.INITED); {
     {
       bool temp = ui.geometry.mode == ui.geometry.SEPARATE_WORLDS;
-      if (ImGui::Checkbox("Use Separate Worlds", &temp)) {
-        ui.geometry.mode = temp ? ui.geometry.SEPARATE_WORLDS : ui.geometry.SAME_WORLD;
-      }
+      (void)ImGui::Checkbox("Use Separate Worlds", &temp);
+      ui.geometry.mode = temp ? ui.geometry.SEPARATE_WORLDS : ui.geometry.SAME_WORLD;
     }
+    if (ui.geometry.mode == ui.geometry.SEPARATE_WORLDS) {
+      ui.tfn.mode = ui.tfn.SEPARATE_TRANSFER_FUNCTIONS;
+    }
+    ImGui::PushEnabled(ui.geometry.mode == ui.geometry.SAME_WORLD); {
+      {
+        bool temp = ui.geometry.mode == ui.geometry.SEPARATE_WORLDS;
+        (void)ImGui::Checkbox("Use Separate Transfer Functions", &temp);
+        ui.tfn.mode = temp ? ui.tfn.SEPARATE_TRANSFER_FUNCTIONS : ui.tfn.SAME_TRANSFER_FUNCTION;
+      }
+    } ImGui::PopEnabled(/* ui.geometry.mode == ui.geometry.SAME_WORLD */);
     if (ImGui::Button("Start Python Co-Process")) {
       startCoProcess();
       ui.coprocess.state = ui.coprocess.STARTED;
@@ -94,27 +103,22 @@ void PanelMikr::buildUI(void *ImGuiCtx)
     }
 
     ImGui::PushEnabled(ui.animation.mode == ui.animation.STOPPED); {
-      { // timestep
+      ImGui::PushID("timestep"); {
         int temp = (int)ui.timestep.index.current;
         int old = temp;
         if (ImGui::Button("<<")) {
-          std::fprintf(stderr, "<<\n");
           temp = 0;
         }
         if (ImGui::SameLine(), ImGui::Button("<")) {
-          std::fprintf(stderr, "<\n");
           --temp;
         }
-        if (ImGui::SameLine(), ImGui::SliderInt("Timestep Index", &temp, 0, timesteps.count - 1, "%d", ImGuiSliderFlags_AlwaysClamp)) {
-          std::fprintf(stderr, "=\n");
+        if (ImGui::SameLine(), ImGui::SliderInt("", &temp, 0, timesteps.count - 1, "Timestep %d", ImGuiSliderFlags_AlwaysClamp)) {
           // no op
         }
         if (ImGui::SameLine(), ImGui::Button(">")) {
-          std::fprintf(stderr, ">\n");
           ++temp;
         }
         if (ImGui::SameLine(), ImGui::Button(">>")) {
-          std::fprintf(stderr, ">>\n");
           temp = timesteps.count - 1;
         }
 
@@ -126,72 +130,65 @@ void PanelMikr::buildUI(void *ImGuiCtx)
           duration difference = ui.animation.time.current - ui.animation.time.previous;
 
           if (difference >= threshold) {
-            ++temp;
-            ui.animation.time.previous = ui.animation.time.current;
+            if (!ui.animation.time.waitingForFinishedFrame) {
+              ++temp;
+              ui.animation.time.waitingForFinishedFrame = true;
+            } else if (context->frame->frameIsReady()) {
+              ui.animation.time.previous = ui.animation.time.current;
+              ui.animation.time.waitingForFinishedFrame = false;
+            }
           }
         }
 
         if (timesteps.count != 0 && temp < 0) {
-          std::fprintf(stderr, "temp (%d) < 0\n", temp);
           temp += timesteps.count;
           assert(timesteps.count == 0 || (0 <= temp && temp < timesteps.count));
         }
         if (timesteps.count != 0 && temp >= timesteps.count) {
-          std::fprintf(stderr, "temp (%d) >= timesteps.count (%zu)\n", temp, timesteps.count);
           temp -= timesteps.count;
           assert(timesteps.count == 0 || (0 <= temp && temp < timesteps.count));
         }
         assert(timesteps.count == 0 || (0 <= temp && temp < timesteps.count));
-        if (temp != old) std::fprintf(stderr, "temp = %d, current = %zu\n", temp, ui.timestep.index.current);
         ui.timestep.index.current = (size_t)temp;
-      } // timestep index
+      } ImGui::PopID(/* "timestep" */);
     } ImGui::PopEnabled(/* ui.animation.mode == ui.animation.STOPPED */);
 
-    { // frames per second
+    ImGui::PushID("fps"); { // frames per second
       int temp = (int)ui.animation.fps;
       if (ImGui::Button("<<")) {
-        std::fprintf(stderr, "<<\n");
         temp = 1;
       }
       if (ImGui::SameLine(), ImGui::Button("<")) {
-        std::fprintf(stderr, "<\n");
         --temp;
       }
-      if (ImGui::SameLine(), ImGui::SliderInt("Frames per Second", &temp, 1, 60, "%d FPS", ImGuiSliderFlags_AlwaysClamp)) {
-        std::fprintf(stderr, "=\n");
+      if (ImGui::SameLine(), ImGui::SliderInt("", &temp, 1, 60, "%d FPS", ImGuiSliderFlags_AlwaysClamp)) {
         // no op
       }
       if (ImGui::SameLine(), ImGui::Button(">")) {
-        std::fprintf(stderr, ">\n");
         ++temp;
       }
       if (ImGui::SameLine(), ImGui::Button(">>")) {
-        std::fprintf(stderr, ">>\n");
         temp = 60;
       }
 
       if (temp < 1) {
-        std::fprintf(stderr, "temp (%d) < 1\n", temp);
         temp = 1;
         assert(1 <= temp && temp <= 60);
       }
-      if (temp >= 60) {
-        std::fprintf(stderr, "temp (%d) >= 60\n", temp);
+      if (temp > 60) {
         temp = 60;
         assert(1 <= temp && temp <= 60);
       }
       assert(1 <= temp && temp <= 60);
       ui.animation.fps = (int)temp;
-    } // frames per second
+    } ImGui::PopID(/* "fps" */);
 
     if (ui.timestep.index.current != ui.timestep.index.previous) {
-      std::fprintf(stderr, "current = %zu, previous = %zu\n", ui.timestep.index.current, ui.timestep.index.previous);
-
       if (ui.geometry.mode == ui.geometry.SEPARATE_WORLDS) {
-        context->frame->add(timesteps.t[ui.timestep.index.current].world.node);
+        context->frame->add(timesteps.t[ui.timestep.index.current].world.node, "world");
       } else if (ui.geometry.mode == ui.geometry.SAME_WORLD) {
-        timesteps.t[ui.timestep.index.previous].world.xfm.tfn.vol.node->child("visible").setValue(false);
-        timesteps.t[ui.timestep.index.current].world.xfm.tfn.vol.node->child("visible").setValue(true);
+        timesteps.t[ui.timestep.index.previous].world.tfn.xfm.vol.node->child("visible").setValue(false);
+        timesteps.t[ui.timestep.index.current].world.tfn.xfm.vol.node->child("visible").setValue(true);
       } else {
         assert(0);
       }
@@ -225,8 +222,7 @@ void PanelMikr::startCoProcess() {
 
   pipe(fds_stdin);
   pipe(fds_stdout);
-  if ((pid = fork()) == 0) {
-    // child
+  if ((pid = fork()) == 0) { // child
     close(0);
     dup2(fds_stdin[0], 0);
     close(fds_stdin[0]);
@@ -243,8 +239,7 @@ void PanelMikr::startCoProcess() {
     perror("execlp");
     exit(0);
 
-  } else {
-    // parent
+  } else { // parent
     coprocess.pid = pid;
     close(fds_stdin[0]);
     coprocess.stdin = fdopen(fds_stdin[1], "w");
@@ -299,69 +294,34 @@ void PanelMikr::transferFromCoProcess() {
     timesteps.t[i].cell.data.count = temp;
 
     fread(&temp, sizeof(temp), 1, coprocess.stdout);
-    D(temp);
     assert(temp >= 0);
     timesteps.t[i].vertex.position.data = (vec3f *)std::malloc(2 * temp); // XXX(th): Don't malloc 2x buffer size
     nread = fread(timesteps.t[i].vertex.position.data, 1, temp, coprocess.stdout);
-    D(nread);
     std::fprintf(stderr, "Read vertex.position\n");
 
     fread(&temp, sizeof(temp), 1, coprocess.stdout);
-    D(temp);
     assert(temp >= 0);
     timesteps.t[i].index.data = (uint32_t *)std::malloc(2 * temp); // XXX(th): Don't malloc 2x buffer size
     nread = fread(timesteps.t[i].index.data, 1, temp, coprocess.stdout);
-    D(nread);
     std::fprintf(stderr, "Read index\n");
 
     fread(&temp, sizeof(temp), 1, coprocess.stdout);
-    D(temp);
     assert(temp >= 0);
     timesteps.t[i].cell.index.data = (uint32_t *)std::malloc(2 * temp); // XXX(th): Don't malloc 2x buffer size
     nread = fread(timesteps.t[i].cell.index.data, 1, temp, coprocess.stdout);
-    D(nread);
     std::fprintf(stderr, "Read cell.index\n");
 
     fread(&temp, sizeof(temp), 1, coprocess.stdout);
-    D(temp);
     assert(temp >= 0);
     timesteps.t[i].cell.type.data = (uint8_t *)std::malloc(2 * temp); // XXX(th): Don't malloc 2x buffer size
     nread = fread(timesteps.t[i].cell.type.data, 1, temp, coprocess.stdout);
-    D(nread);
     std::fprintf(stderr, "Read cell.type\n");
 
     fread(&temp, sizeof(temp), 1, coprocess.stdout);
-    D(temp);
     assert(temp >= 0);
     timesteps.t[i].cell.data.data = (float *)std::malloc(2 * temp); // XXX(th): Don't malloc 2x buffer size
     nread = fread(timesteps.t[i].cell.data.data, 1, temp, coprocess.stdout);
-    D(nread);
     std::fprintf(stderr, "Read cell.data\n");
-
-    timesteps.t[i].vertex.position.minimum = timesteps.t[i].vertex.position.data[0];
-    timesteps.t[i].vertex.position.maximum = timesteps.t[i].vertex.position.data[0];
-    for (size_t j=0; j<timesteps.t[i].vertex.position.count; ++j) {
-      if (timesteps.t[i].vertex.position.data[j].x < timesteps.t[i].vertex.position.minimum.x) {
-        timesteps.t[i].vertex.position.minimum.x = timesteps.t[i].vertex.position.data[j].x;
-      }
-      if (timesteps.t[i].vertex.position.data[j].y < timesteps.t[i].vertex.position.minimum.y) {
-        timesteps.t[i].vertex.position.minimum.y = timesteps.t[i].vertex.position.data[j].y;
-      }
-      if (timesteps.t[i].vertex.position.data[j].z < timesteps.t[i].vertex.position.minimum.z) {
-        timesteps.t[i].vertex.position.minimum.z = timesteps.t[i].vertex.position.data[j].z;
-      }
-      if (timesteps.t[i].vertex.position.data[j].x > timesteps.t[i].vertex.position.maximum.x) {
-        timesteps.t[i].vertex.position.maximum.x = timesteps.t[i].vertex.position.data[j].x;
-      }
-      if (timesteps.t[i].vertex.position.data[j].y > timesteps.t[i].vertex.position.maximum.y) {
-        timesteps.t[i].vertex.position.maximum.y = timesteps.t[i].vertex.position.data[j].y;
-      }
-      if (timesteps.t[i].vertex.position.data[j].z > timesteps.t[i].vertex.position.maximum.z) {
-        timesteps.t[i].vertex.position.maximum.z = timesteps.t[i].vertex.position.data[j].z;
-      }
-    }
-    timesteps.t[i].vertex.position.minimum -= vec3f(1.0f);
-    timesteps.t[i].vertex.position.maximum += vec3f(1.0f);
 
     timesteps.t[i].cell.data.minimum = timesteps.t[i].cell.data.data[0];
     timesteps.t[i].cell.data.maximum = timesteps.t[i].cell.data.data[0];
@@ -376,38 +336,64 @@ void PanelMikr::transferFromCoProcess() {
     timesteps.t[i].cell.data.minimum -= 1.0f;
     timesteps.t[i].cell.data.maximum += 1.0f;
   }
+
+  timesteps.cell.data.minimum = timesteps.t[0].cell.data.minimum;
+  timesteps.cell.data.maximum = timesteps.t[0].cell.data.maximum;
+  for (size_t i=1; i<timesteps.count; ++i) {
+    if (timesteps.t[i].cell.data.minimum < timesteps.cell.data.minimum) {
+      timesteps.cell.data.minimum = timesteps.t[i].cell.data.minimum;
+    }
+    if (timesteps.t[i].cell.data.maximum > timesteps.cell.data.maximum) {
+      timesteps.cell.data.maximum = timesteps.t[i].cell.data.maximum;
+    }
+  }
 }
 
+#define SG_PREFIX(x) ("mikr_" x)
 void PanelMikr::createGeometry() {
   std::fprintf(stderr, "Create\n");
 
   for (size_t i=0; i<timesteps.count; ++i) {
-    sg::NodePtr world = nullptr;
-    if (ui.geometry.mode == ui.geometry.SAME_WORLD) {
-      world = context->frame->childNodeAs<sg::Node>("world");
+    if (ui.geometry.mode == ui.geometry.SEPARATE_WORLDS) {
+      std::string name(128, '\0');
+      std::snprintf(const_cast<char *>(name.data()), 128, SG_PREFIX("world_%s"), timesteps.t[i].name.c_str());
+      timesteps.t[i].world.node = sg::createNode(name, "world");
+    } else if (ui.geometry.mode == ui.geometry.SAME_WORLD) {
+      timesteps.t[i].world.node = context->frame->childNodeAs<sg::Node>("world");
     } else {
-      world = sg::createNode("world", "world");
-      if (i == 0) {
-        context->frame->add(world);
-      }
+      throw NotImplemented();
     }
-    timesteps.t[i].world.node = world;
+    auto &world = *timesteps.t[i].world.node;
 
-    std::string xfmName(128, '\0');
-    std::snprintf(const_cast<char *>(xfmName.data()), 128, "xfm_%s", timesteps.t[i].name.c_str());
-    auto &xfm = world->createChild(xfmName, "transform");
-    timesteps.t[i].world.xfm.node = xfm.nodeAs<sg::Node>();
+    if (ui.tfn.mode == ui.tfn.SEPARATE_TRANSFER_FUNCTIONS) {
+      std::string name(128, '\0');
+      std::snprintf(const_cast<char *>(name.data()), 128, SG_PREFIX("tfn_%s"), timesteps.t[i].name.c_str());
+      timesteps.t[i].world.tfn.node = world.createChild(name, "transfer_function_viridis").nodeAs<sg::Node>();
+    } else if (ui.tfn.mode == ui.tfn.SAME_TRANSFER_FUNCTION) {
+      if (i == 0) {
+        timesteps.t[i].world.tfn.node = world.createChild(SG_PREFIX("tfn"), "transfer_function_viridis").nodeAs<sg::Node>();
+      } else {
+        timesteps.t[i].world.tfn.node = world.childNodeAs<sg::Node>(SG_PREFIX("tfn"));
+      }
+    } else {
+      throw NotImplemented();
+    }
+    auto &tfn = *timesteps.t[i].world.tfn.node;
+    tfn["valueRange"] = vec2f(timesteps.cell.data.minimum, timesteps.cell.data.maximum);
 
-    std::string tfnName(128, '\0');
-    std::snprintf(const_cast<char *>(tfnName.data()), 128, "tfn_%s", timesteps.t[i].name.c_str());
-    auto &tfn = xfm.createChild(tfnName, "transfer_function_viridis");
-    timesteps.t[i].world.xfm.tfn.node = tfn.nodeAs<sg::Node>();
-    tfn["valueRange"] = vec2f(timesteps.t[i].cell.data.minimum, timesteps.t[i].cell.data.maximum);
+    {
+      std::string name(128, '\0');
+      std::snprintf(const_cast<char *>(name.data()), 128, SG_PREFIX("xfm_%s"), timesteps.t[i].name.c_str());
+      timesteps.t[i].world.tfn.xfm.node = tfn.createChild(name, "transform").nodeAs<sg::Node>();
+    }
+    auto &xfm = *timesteps.t[i].world.tfn.xfm.node;
 
-    std::string volName(128, '\0');
-    std::snprintf(const_cast<char *>(volName.data()), 128, "vol_%s", timesteps.t[i].name.c_str());
-    auto &vol = tfn.createChild(volName, "volume_unstructured");
-    timesteps.t[i].world.xfm.tfn.vol.node = vol.nodeAs<sg::Node>();
+    {
+      std::string name(128, '\0');
+      std::snprintf(const_cast<char *>(name.data()), 128, SG_PREFIX("vol_%s"), timesteps.t[i].name.c_str());
+      timesteps.t[i].world.tfn.xfm.vol.node = xfm.createChild(name, "volume_unstructured").nodeAs<sg::Node>();
+    }
+    auto &vol = *timesteps.t[i].world.tfn.xfm.vol.node;
     vol["valueRange"] = range1f(timesteps.t[i].cell.data.minimum, timesteps.t[i].cell.data.maximum);
     vol.child("valueRange").setSGOnly();
     vol.remove("vertex.data");
@@ -428,20 +414,31 @@ void PanelMikr::createGeometry() {
                         timesteps.t[i].cell.data.data);
 
     vol.commit();
-    tfn.commit();
     xfm.commit();
-    world->commit();
+    tfn.commit();
+    world.commit();
   }
+
+  if (ui.geometry.mode == ui.geometry.SEPARATE_WORLDS) {
+    context->frame->add(timesteps.t[0].world.node, "world");
+  } else if (ui.geometry.mode == ui.geometry.SAME_WORLD) {
+    timesteps.t[0].world.tfn.xfm.vol.node->child("visible") = true;
+    for (size_t i=1; i<timesteps.count; ++i) {
+      timesteps.t[i].world.tfn.xfm.vol.node->child("visible") = false;
+    }
+  } else {
+    throw NotImplemented();
+  }
+
   context->frame->traverse<sg::PrintNodes>();
 
   context->refreshScene(true);
 }
+#undef SG_PREFIX
 
 void PanelMikr::stopCoProcess() {
   std::fprintf(stderr, "Stop\n");
 }
-
-#undef D
 
 }  // namespace mikr_plugin
 }  // namespace ospray

@@ -9,6 +9,15 @@
 namespace ospray {
 namespace mikr_plugin {
 
+// Thanks https://stackoverflow.com/a/36851059
+class NotImplemented : public std::logic_error
+{
+public:
+    NotImplemented()
+      : std::logic_error("Not Implemented")
+    {};
+};
+
 struct PanelMikr : public Panel
 {
   PanelMikr(std::shared_ptr<StudioContext> _context);
@@ -46,6 +55,13 @@ protected:
     } geometry; // ui.geometry
 
     struct {
+      enum {
+        SEPARATE_TRANSFER_FUNCTIONS, // ui.tfn.SEPARATE_TRANSFER_FUNCTION
+        SAME_TRANSFER_FUNCTION, // ui.tfn.SAME_TRANSFER_FUNCTION
+      } mode; // ui.tfn.mode
+    } tfn; // ui.tfn
+
+    struct {
       struct {
         size_t current; // ui.timestep.index.current
         size_t previous; // ui.timestep.index.previous
@@ -63,6 +79,7 @@ protected:
       struct {
         time_point current; // ui.animation.time.current
         time_point previous; // ui.animation.time.previous
+        bool waitingForFinishedFrame; // ui.animation.time.waitingForFinishedFrame
       } time; // ui.animation.time
     } animation; // ui.animation
   } ui;
@@ -75,23 +92,30 @@ protected:
 
   struct {
     size_t count; // timesteps.count
+
+    struct {
+      struct {
+        float minimum; // timesteps.cell.data.minumum
+        float maximum; // timesteps.cell.data.maximum
+      } data; // timesteps.cell.data
+    } cell; // timesteps.cell
+
     struct _T;
     std::vector<_T> t; // timesteps.t[i]
-
     struct _T {
       std::string name; // timesteps.t[i].name
 
       struct {
         sg::NodePtr node; // timesteps.t[i].world.node
         struct {
-          sg::NodePtr node; // timesteps.t[i].world.xfm.node
+          sg::NodePtr node; // timesteps.t[i].world.tfn.node
           struct {
-            sg::NodePtr node; // timesteps.t[i].world.xfm.tfn.node
+            sg::NodePtr node; // timesteps.t[i].world.tfn.xfm.node
             struct {
-              sg::NodePtr node; // timesteps.t[i].world.xfm.tfn.vol.node
-            } vol; // timesteps.t[i].world.xfm.tfn.vol
-          } tfn; // timesteps.t[i].world.xfm.tfn
-        } xfm; // timesteps.t[i].world.xfm
+              sg::NodePtr node; // timesteps.t[i].world.tfn.xfm.vol.node
+            } vol; // timesteps.t[i].world.tfn.xfm.vol
+          } xfm; // timesteps.t[i].world.tfn.xfm
+        } tfn; // timesteps.t[i].world.tfn
       } world; // timesteps.t[i].world
 
       struct {
