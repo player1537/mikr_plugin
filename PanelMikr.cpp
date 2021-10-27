@@ -11,8 +11,18 @@
 namespace rkcommon {
 namespace tasking {
 
-}
-}
+template <>
+struct AsyncTask<void> : AsyncTask<int> {
+  AsyncTask(std::function<void()> fcn)
+    : AsyncTask<int>::AsyncTask([fcn]() {
+      fcn();
+      return 0;
+    })
+  {}
+};
+
+} /* } namespace tasking */
+} /* } namespace rkcommon */
 
 namespace ImGui {
 
@@ -36,7 +46,8 @@ PanelMikr::PanelMikr(
   : Panel("Mikr Panel", context)
 {
   ui.coprocess.filename = optDefaultFilename;
-  ui.coprocess.state = ui.coprocess.INITED;
+  ui.coprocess.state.next = ui.coprocess.state.INITED;
+  ui.coprocess.state.current = ui.coprocess.state.next;
   ui.coprocess.loaded.task = nullptr;
   ui.coprocess.loaded.percent = 0.0f;
   ui.coprocess.transferred.task = nullptr;
@@ -69,7 +80,9 @@ void PanelMikr::buildUI(void *ImGuiCtx)
     return;
   }
 
-  ImGui::PushEnabled(ui.coprocess.state == ui.coprocess.INITED); {
+  ui.coprocess.state.current = ui.coprocess.state.next;
+
+  ImGui::PushEnabled(ui.coprocess.state.current == ui.coprocess.state.INITED); {
     {
       std::string temp{ui.coprocess.filename};
       temp.resize(1024, '\0');
@@ -90,63 +103,71 @@ void PanelMikr::buildUI(void *ImGuiCtx)
     }
     ImGui::PushEnabled(ui.geometry.mode == ui.geometry.SAME_WORLD); {
       {
-        bool temp = ui.geometry.mode == ui.geometry.SEPARATE_WORLDS;
+        bool temp = ui.tfn.mode == ui.tfn.SEPARATE_TRANSFER_FUNCTIONS;
         (void)ImGui::Checkbox("Use Separate Transfer Functions###ui.tfn.mode", &temp);
         ui.tfn.mode = temp ? ui.tfn.SEPARATE_TRANSFER_FUNCTIONS : ui.tfn.SAME_TRANSFER_FUNCTION;
       }
     } ImGui::PopEnabled(/* ui.geometry.mode == ui.geometry.SAME_WORLD */);
     if (ImGui::Button("Start Python Co-Process###ui.coprocess.started.task")) {
-      ui.coprocess.state = ui.coprocess.STARTED_ACTIVE;
+      ui.coprocess.state.next = ui.coprocess.state.STARTED_ACTIVE;
+      std::fprintf(stderr, "Before startCoProcess task\n");
       ui.coprocess.started.task = std::make_unique<Task>([this]() {
+        std::fprintf(stderr, "Inside startCoProcess task\n");
         startCoProcess();
-        ui.coprocess.state = ui.coprocess.STARTED;
+        ui.coprocess.state.next = ui.coprocess.state.STARTED;
+        std::fprintf(stderr, "After startCoProcess task\n");
       });
     }
-  } ImGui::PopEnabled(/* ui.coprocess.state == ui.coprocess.INITED */);
+  } ImGui::PopEnabled(/* ui.coprocess.state.current == ui.coprocess.state.INITED */);
 
-  ImGui::PushEnabled(ui.coprocess.state == ui.coprocess.STARTED); {
+  ImGui::PushEnabled(ui.coprocess.state.current == ui.coprocess.state.STARTED); {
     if (ImGui::Button("Load Data in Co-Process###ui.coprocess.loaded.task")) {
-      ui.coprocess.state = ui.coprocess.LOADED_ACTIVE;
+      ui.coprocess.state.next = ui.coprocess.state.LOADED_ACTIVE;
       ui.coprocess.loaded.task = std::make_unique<Task>([this]() {
         loadInCoProcess();
-        ui.coprocess.state = ui.coprocess.LOADED;
+        ui.coprocess.state.next = ui.coprocess.state.LOADED;
       });
     }
     {
       float temp{ui.coprocess.loaded.percent};
       ImGui::ProgressBar(temp);
     }
-  } ImGui::PopEnabled(/* ui.coprocess.state == ui.coprocess.STARTED */);
+  } ImGui::PopEnabled(/* ui.coprocess.state.current == ui.coprocess.state.STARTED */);
 
-  ImGui::PushEnabled(ui.coprocess.state == ui.coprocess.LOADED); {
+  ImGui::PushEnabled(ui.coprocess.state.current == ui.coprocess.state.LOADED); {
     if (ImGui::Button("Transfer Data from Co-Process###ui.coprocess.transferred.task")) {
-      ui.coprocess.state = ui.coprocess.TRANSFERRED_ACTIVE;
+      ui.coprocess.state.next = ui.coprocess.state.TRANSFERRED_ACTIVE;
       ui.coprocess.transferred.task = std::make_unique<Task>([this]() {
         transferFromCoProcess();
-        ui.coprocess.state = ui.coprocess.TRANSFERRED;
+        ui.coprocess.state.next = ui.coprocess.state.TRANSFERRED;
       });
     }
     {
       float temp{ui.coprocess.transferred.percent};
       ImGui::ProgressBar(temp);
     }
-  } ImGui::PopEnabled(/* ui.coprocess.state == ui.coprocess.LOADED */);
+  } ImGui::PopEnabled(/* ui.coprocess.state.current == ui.coprocess.state.LOADED */);
 
-  ImGui::PushEnabled(ui.coprocess.state == ui.coprocess.TRANSFERRED); {
+  ImGui::PushEnabled(ui.coprocess.state.current == ui.coprocess.state.TRANSFERRED); {
     if (ImGui::Button("Create Geometry###ui.coprocess.created.task")) {
-      ui.coprocess.state = ui.coprocess.CREATED_ACTIVE;
+      ui.coprocess.state.next = ui.coprocess.state.CREATED_ACTIVE;
+
+      ui.coprocess.created.mutex.lock();
       ui.coprocess.created.task = std::make_unique<Task>([this]() {
         createGeometry();
-        ui.coprocess.state = ui.coprocess.CREATED;
       });
+      ui.coprocess.created.condition.wait(ui.coprocess.created.mutex);
+    }
+    if (ui.coprocess.state.current == ui.coprocess.state.CREATED_ACTIVE) {
+      ui.coprocess.created.condition.wait(ui.coprocess.created.mutex);
     }
     {
       float temp{ui.coprocess.created.percent};
       ImGui::ProgressBar(temp);
     }
-  } ImGui::PopEnabled(/* ui.coprocess.state == ui.coprocess.TRANSFERRED */);
+  } ImGui::PopEnabled(/* ui.coprocess.state.current == ui.coprocess.state.TRANSFERRED */);
 
-  ImGui::PushEnabled(ui.coprocess.state == ui.coprocess.CREATED); {
+  ImGui::PushEnabled(ui.coprocess.state.current == ui.coprocess.state.CREATED); {
     {
       bool temp = ui.animation.mode == ui.animation.PLAYING;
       if (ImGui::Checkbox("Animate###ui.animation.mode", &temp)) {
@@ -174,7 +195,7 @@ void PanelMikr::buildUI(void *ImGuiCtx)
           temp = timesteps.count - 1;
         }
 
-        if (ui.coprocess.state == ui.coprocess.CREATED && ui.animation.mode == ui.animation.PLAYING) {
+        if (ui.coprocess.state.current == ui.coprocess.state.CREATED && ui.animation.mode == ui.animation.PLAYING) {
           ui.animation.time.current = clock::now();
           using namespace std::literals::chrono_literals;
 
@@ -248,17 +269,17 @@ void PanelMikr::buildUI(void *ImGuiCtx)
       context->refreshScene(false);
       ui.timestep.index.previous = ui.timestep.index.current;
     }
-  } ImGui::PopEnabled(/* ui.coprocess.state == ui.coprocess.CREATED */);
+  } ImGui::PopEnabled(/* ui.coprocess.state.current == ui.coprocess.state.CREATED */);
 
-  ImGui::PushEnabled(ui.coprocess.state == ui.coprocess.INITED); {
-    if (ImGui::Button("Stop Python Co-Process###ui.coprocess.STOPPED")) {
-      ui.coprocess.state = ui.coprocess.STOPPED_ACTIVE;
+  ImGui::PushEnabled(ui.coprocess.state.current == ui.coprocess.state.INITED); {
+    if (ImGui::Button("Stop Python Co-Process###ui.coprocess.state.STOPPED")) {
+      ui.coprocess.state.next = ui.coprocess.state.STOPPED_ACTIVE;
       ui.coprocess.stopped.task = std::make_unique<Task>([this]() {
         stopCoProcess();
-        ui.coprocess.state = ui.coprocess.STOPPED;
+        ui.coprocess.state.next = ui.coprocess.state.STOPPED;
       });
     }
-  } ImGui::PopEnabled(/* ui.coprocess.state == ui.coprocess.INITED */);
+  } ImGui::PopEnabled(/* ui.coprocess.state.current == ui.coprocess.state.INITED */);
 
   if (ImGui::Button("Close")) {
     setShown(false);
@@ -422,8 +443,15 @@ void PanelMikr::transferFromCoProcess() {
 void PanelMikr::createGeometry() {
   std::fprintf(stderr, "Create\n");
 
+  ui.coprocess.created.mutex.lock();
+
   for (size_t i=0; i<timesteps.count; ++i) {
     ui.coprocess.created.percent = (float)i / (float)timesteps.count;
+    ui.coprocess.created.condition.notify_one();
+    ui.coprocess.created.mutex.unlock();
+    std::this_thread::yield();
+    ui.coprocess.created.mutex.lock();
+
     if (ui.geometry.mode == ui.geometry.SEPARATE_WORLDS) {
       std::string name(128, '\0');
       std::snprintf(const_cast<char *>(name.data()), 128, SG_PREFIX("world_%s"), timesteps.t[i].name.c_str());
@@ -433,60 +461,63 @@ void PanelMikr::createGeometry() {
     } else {
       throw NotImplemented();
     }
-    auto &world = *timesteps.t[i].world.node;
 
-    if (ui.tfn.mode == ui.tfn.SEPARATE_TRANSFER_FUNCTIONS) {
-      std::string name(128, '\0');
-      std::snprintf(const_cast<char *>(name.data()), 128, SG_PREFIX("tfn_%s"), timesteps.t[i].name.c_str());
-      timesteps.t[i].world.tfn.node = world.createChild(name, "transfer_function_viridis").nodeAs<sg::Node>();
-    } else if (ui.tfn.mode == ui.tfn.SAME_TRANSFER_FUNCTION) {
-      if (i == 0) {
-        timesteps.t[i].world.tfn.node = world.createChild(SG_PREFIX("tfn"), "transfer_function_viridis").nodeAs<sg::Node>();
+    auto &world = *timesteps.t[i].world.node; {
+      if (ui.tfn.mode == ui.tfn.SEPARATE_TRANSFER_FUNCTIONS) {
+        std::string name(128, '\0');
+        std::snprintf(const_cast<char *>(name.data()), 128, SG_PREFIX("tfn_%s"), timesteps.t[i].name.c_str());
+        timesteps.t[i].world.tfn.node = sg::createNode(name, "transfer_function_viridis");
+      } else if (ui.tfn.mode == ui.tfn.SAME_TRANSFER_FUNCTION) {
+        if (i == 0) {
+          timesteps.t[i].world.tfn.node = sg::createNode(SG_PREFIX("tfn"), "transfer_function_viridis");
+        } else {
+          timesteps.t[i].world.tfn.node = timesteps.t[0].world.tfn.node;
+        }
       } else {
-        timesteps.t[i].world.tfn.node = world.childNodeAs<sg::Node>(SG_PREFIX("tfn"));
+        throw NotImplemented();
       }
-    } else {
-      throw NotImplemented();
-    }
-    auto &tfn = *timesteps.t[i].world.tfn.node;
-    tfn["valueRange"] = vec2f(timesteps.cell.data.minimum, timesteps.cell.data.maximum);
 
-    {
-      std::string name(128, '\0');
-      std::snprintf(const_cast<char *>(name.data()), 128, SG_PREFIX("xfm_%s"), timesteps.t[i].name.c_str());
-      timesteps.t[i].world.tfn.xfm.node = tfn.createChild(name, "transform").nodeAs<sg::Node>();
-    }
-    auto &xfm = *timesteps.t[i].world.tfn.xfm.node;
+      auto &tfn = *timesteps.t[i].world.tfn.node; {
+        tfn["valueRange"] = vec2f(timesteps.cell.data.minimum, timesteps.cell.data.maximum);
 
-    {
-      std::string name(128, '\0');
-      std::snprintf(const_cast<char *>(name.data()), 128, SG_PREFIX("vol_%s"), timesteps.t[i].name.c_str());
-      timesteps.t[i].world.tfn.xfm.vol.node = xfm.createChild(name, "volume_unstructured").nodeAs<sg::Node>();
-    }
-    auto &vol = *timesteps.t[i].world.tfn.xfm.vol.node;
-    vol["valueRange"] = range1f(timesteps.t[i].cell.data.minimum, timesteps.t[i].cell.data.maximum);
-    vol.child("valueRange").setSGOnly();
-    vol.remove("vertex.data");
-    vol.createChildData("vertex.position",
-                        timesteps.t[i].vertex.position.count,
-                        timesteps.t[i].vertex.position.data);
-    vol.createChildData("index",
-                        timesteps.t[i].index.count,
-                        timesteps.t[i].index.data);
-    vol.createChildData("cell.index",
-                        timesteps.t[i].cell.index.count,
-                        timesteps.t[i].cell.index.data);
-    vol.createChildData("cell.type",
-                        timesteps.t[i].cell.type.count,
-                        timesteps.t[i].cell.type.data);
-    vol.createChildData("cell.data",
-                        timesteps.t[i].cell.data.count,
-                        timesteps.t[i].cell.data.data);
+        {
+          std::string name(128, '\0');
+          std::snprintf(const_cast<char *>(name.data()), 128, SG_PREFIX("xfm_%s"), timesteps.t[i].name.c_str());
+          timesteps.t[i].world.tfn.xfm.node = sg::createNode(name, "transform");
+        }
 
-    vol.commit();
-    xfm.commit();
-    tfn.commit();
-    world.commit();
+        auto &xfm = *timesteps.t[i].world.tfn.xfm.node; {
+          {
+            std::string name(128, '\0');
+            std::snprintf(const_cast<char *>(name.data()), 128, SG_PREFIX("vol_%s"), timesteps.t[i].name.c_str());
+            timesteps.t[i].world.tfn.xfm.vol.node = sg::createNode(name, "volume_unstructured");
+          }
+          auto &vol = *timesteps.t[i].world.tfn.xfm.vol.node; {
+            vol["valueRange"] = range1f(timesteps.t[i].cell.data.minimum, timesteps.t[i].cell.data.maximum);
+            vol.child("valueRange").setSGOnly();
+            vol.remove("vertex.data");
+            vol.createChildData("vertex.position",
+                                timesteps.t[i].vertex.position.count,
+                                timesteps.t[i].vertex.position.data);
+            vol.createChildData("index",
+                                timesteps.t[i].index.count,
+                                timesteps.t[i].index.data);
+            vol.createChildData("cell.index",
+                                timesteps.t[i].cell.index.count,
+                                timesteps.t[i].cell.index.data);
+            vol.createChildData("cell.type",
+                                timesteps.t[i].cell.type.count,
+                                timesteps.t[i].cell.type.data);
+            vol.createChildData("cell.data",
+                                timesteps.t[i].cell.data.count,
+                                timesteps.t[i].cell.data.data);
+          } vol.commit();
+          xfm.add(vol);
+        } xfm.commit();
+        tfn.add(xfm);
+      } tfn.commit();
+      world.add(tfn);
+    } world.commit();
   }
 
   if (ui.geometry.mode == ui.geometry.SEPARATE_WORLDS) {
@@ -505,6 +536,10 @@ void PanelMikr::createGeometry() {
   context->refreshScene(true);
 
   ui.coprocess.created.percent = 1.0f;
+  ui.coprocess.state.next = ui.coprocess.state.CREATED;
+
+  ui.coprocess.created.condition.notify_one();
+  ui.coprocess.created.mutex.unlock();
 }
 #undef SG_PREFIX
 

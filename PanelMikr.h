@@ -7,6 +7,8 @@
 #include "app/ospStudio.h"
 #include "rkcommon/tasking/AsyncTask.h"
 
+#include <condition_variable>
+
 namespace ospray {
 namespace mikr_plugin {
 
@@ -42,18 +44,24 @@ protected:
     struct {
       std::string filename; // ui.coprocess.filename
 
-      enum {
-        INITED, // ui.coprocess.INITED
-        STARTED, // ui.coprocess.STARTED
-        STARTED_ACTIVE, // ui.coprocess.STARTED_ACTIVE
-        LOADED, // ui.coprocess.LOADED
-        LOADED_ACTIVE, // ui.coprocess.LOADED_ACTIVE
-        TRANSFERRED, // ui.coprocess.TRANSFERRED
-        TRANSFERRED_ACTIVE, // ui.coprocess.TRANSFERRED_ACTIVE
-        CREATED, // ui.coprocess.CREATED
-        CREATED_ACTIVE, // ui.coprocess.CREATED_ACTIVE
-        STOPPED, // ui.coprocess.STOPPED
-        STOPPED_ACTIVE, // ui.coprocess.STOPPED_ACTIVE
+      struct {
+        enum _S {
+          INITED, // ui.coprocess.state.INITED
+          STARTED, // ui.coprocess.state.STARTED
+          STARTED_ACTIVE, // ui.coprocess.state.STARTED_ACTIVE
+          LOADED, // ui.coprocess.state.LOADED
+          LOADED_ACTIVE, // ui.coprocess.state.LOADED_ACTIVE
+          TRANSFERRED, // ui.coprocess.state.TRANSFERRED
+          TRANSFERRED_ACTIVE, // ui.coprocess.state.TRANSFERRED_ACTIVE
+          CREATED, // ui.coprocess.state.CREATED
+          CREATED_ACTIVE, // ui.coprocess.state.CREATED_ACTIVE
+          STOPPED, // ui.coprocess.state.STOPPED
+          STOPPED_ACTIVE, // ui.coprocess.state.STOPPED_ACTIVE
+        };
+
+        enum _S;
+        _S current; // ui.coprocess.state.current
+        std::atomic<_S> next; // ui.coprocess.state.next
       } state; // ui.coprocess.state
 
       struct {
@@ -73,6 +81,8 @@ protected:
       struct {
         std::unique_ptr<Task> task; // ui.coprocess.created.task
         std::atomic<float> percent; // ui.coprocess.created.percent
+        std::mutex mutex; // ui.coprocess.created.mutex
+        std::condition_variable_any condition; // ui.coprocess.created.condition
       } created; // ui.coprocess.created
 
       struct {
