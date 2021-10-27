@@ -5,6 +5,7 @@
 
 #include "app/widgets/Panel.h"
 #include "app/ospStudio.h"
+#include "rkcommon/tasking/AsyncTask.h"
 
 namespace ospray {
 namespace mikr_plugin {
@@ -20,7 +21,8 @@ public:
 
 struct PanelMikr : public Panel
 {
-  PanelMikr(std::shared_ptr<StudioContext> _context);
+  PanelMikr(std::shared_ptr<StudioContext> context,
+            std::string optDefaultFilename);
 
   void buildUI(void *ImGuiCtx) override;
 
@@ -34,17 +36,48 @@ protected:
   using clock = std::chrono::system_clock;
   using time_point = std::chrono::time_point<clock>;
   using duration = std::chrono::duration<float>;
+  using Task = rkcommon::tasking::AsyncTask<void>;
 
   struct {
     struct {
+      std::string filename; // ui.coprocess.filename
+
       enum {
         INITED, // ui.coprocess.INITED
         STARTED, // ui.coprocess.STARTED
+        STARTED_ACTIVE, // ui.coprocess.STARTED_ACTIVE
         LOADED, // ui.coprocess.LOADED
+        LOADED_ACTIVE, // ui.coprocess.LOADED_ACTIVE
         TRANSFERRED, // ui.coprocess.TRANSFERRED
+        TRANSFERRED_ACTIVE, // ui.coprocess.TRANSFERRED_ACTIVE
         CREATED, // ui.coprocess.CREATED
+        CREATED_ACTIVE, // ui.coprocess.CREATED_ACTIVE
         STOPPED, // ui.coprocess.STOPPED
+        STOPPED_ACTIVE, // ui.coprocess.STOPPED_ACTIVE
       } state; // ui.coprocess.state
+
+      struct {
+        std::unique_ptr<Task> task; // ui.coprocess.started.task
+      } started; // ui.coprocess.started
+
+      struct {
+        std::unique_ptr<Task> task; // ui.coprocess.loaded.task
+        std::atomic<float> percent; // ui.coprocess.loaded.percent
+      } loaded; // ui.coprocess.loaded
+
+      struct {
+        std::unique_ptr<Task> task; // ui.coprocess.transferred.task
+        std::atomic<float> percent; // ui.coprocess.transferred.percent
+      } transferred; // ui.coprocess.transferred
+
+      struct {
+        std::unique_ptr<Task> task; // ui.coprocess.created.task
+        std::atomic<float> percent; // ui.coprocess.created.percent
+      } created; // ui.coprocess.created
+
+      struct {
+        std::unique_ptr<Task> task; // ui.coprocess.stopped.task
+      } stopped; // ui.coprocess.stopped
     } coprocess; // ui.coprocess
 
     struct {

@@ -54,10 +54,13 @@ class Mikr:
         cls,
         root: Union[Path, ZipPath],
     ) -> Mikr:
+        print(f'{root=}')
+        print(f'{root/"nodes.csv"=}')
         with (root / 'nodes.csv').open('r') as f:
             #f = TextIOWrapper(f, encoding='utf-8')
             points = Point.parseall(f)
         
+        print(f'{root/"elements.csv"=}')
         with (root / 'elements.csv').open('r') as f:
             #f = TextIOWrapper(f, encoding='utf-8')
             boxes = Box.parseall(f, points)
@@ -391,7 +394,7 @@ def main(root):
 
 
 def cli():
-    def zipfile(s):
+    def zip_aware_path(s):
         path = Path(s)
         parts = path.parts
         root = Path(parts[0])
@@ -408,15 +411,15 @@ def cli():
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        '--zip',
-        type=Path,
+        '--data',
+        type=zip_aware_path,
         default=None,
         dest='root',
     )
     args = vars(parser.parse_args())
 
     if args['root'] is None:
-        args['root'] = zipfile(Path.cwd() / 'data' / 'bridge_15mm' / 'bridge_15mm_subset.zip' / 'bridge_15mm')
+        args['root'] = zip_aware_path(Path.cwd() / 'data' / 'bridge_15mm' / 'bridge_15mm_subset.zip' / 'bridge_15mm')
 
     main(**args)
 

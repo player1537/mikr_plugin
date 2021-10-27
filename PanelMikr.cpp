@@ -8,23 +8,41 @@
 #include "imgui.h"
 #include "imgui_internal.h" // ImGui::PushDisabled, ImGui::PopDisabled
 
-namespace ImGui {
-  IMGUI_API void PushEnabled(bool enabled = true) {
-    PushDisabled(!enabled);
-  }
+namespace rkcommon {
+namespace tasking {
 
-  IMGUI_API void PopEnabled() {
-    PopDisabled();
-  }
 }
+}
+
+namespace ImGui {
+
+IMGUI_API void PushEnabled(bool enabled = true) {
+  PushDisabled(!enabled);
+}
+
+IMGUI_API void PopEnabled() {
+  PopDisabled();
+}
+
+} /* } namespace ImGui */
 
 namespace ospray {
 namespace mikr_plugin {
 
-PanelMikr::PanelMikr(std::shared_ptr<StudioContext> _context)
-    : Panel("Mikr Panel", _context)
+PanelMikr::PanelMikr(
+  std::shared_ptr<StudioContext> context,
+  std::string optDefaultFilename
+)
+  : Panel("Mikr Panel", context)
 {
+  ui.coprocess.filename = optDefaultFilename;
   ui.coprocess.state = ui.coprocess.INITED;
+  ui.coprocess.loaded.task = nullptr;
+  ui.coprocess.loaded.percent = 0.0f;
+  ui.coprocess.transferred.task = nullptr;
+  ui.coprocess.transferred.percent = 0.0f;
+  ui.coprocess.created.task = nullptr;
+  ui.coprocess.created.percent = 0.0f;
   ui.geometry.mode = ui.geometry.SAME_WORLD;
   ui.tfn.mode = ui.tfn.SAME_TRANSFER_FUNCTION;
   ui.timestep.index.current = 0;
@@ -46,15 +64,25 @@ void PanelMikr::buildUI(void *ImGuiCtx)
   // Need to set ImGuiContext in *this* address space
   ImGui::SetCurrentContext((ImGuiContext *)ImGuiCtx);
   ImGuiContext &imGuiCtx = *ImGui::GetCurrentContext();
-  if (!ImGui::Begin("Mikr Panel", &show, ImGuiWindowFlags_AlwaysAutoResize)) {
+  if (!ImGui::Begin("Mikr Panel###PanelMikr", &show, ImGuiWindowFlags_AlwaysAutoResize)) {
     ImGui::End();
     return;
   }
 
   ImGui::PushEnabled(ui.coprocess.state == ui.coprocess.INITED); {
     {
+      std::string temp{ui.coprocess.filename};
+      temp.resize(1024, '\0');
+      ImGuiInputTextFlags flags{0};
+      (void)ImGui::InputText("###ui.coprocess.filename",
+                             const_cast<char *>(temp.data()),
+                             1024,
+                             flags);
+      ui.coprocess.filename = temp;
+    }
+    {
       bool temp = ui.geometry.mode == ui.geometry.SEPARATE_WORLDS;
-      (void)ImGui::Checkbox("Use Separate Worlds", &temp);
+      (void)ImGui::Checkbox("Use Separate Worlds###ui.geometry.mode", &temp);
       ui.geometry.mode = temp ? ui.geometry.SEPARATE_WORLDS : ui.geometry.SAME_WORLD;
     }
     if (ui.geometry.mode == ui.geometry.SEPARATE_WORLDS) {
@@ -63,47 +91,71 @@ void PanelMikr::buildUI(void *ImGuiCtx)
     ImGui::PushEnabled(ui.geometry.mode == ui.geometry.SAME_WORLD); {
       {
         bool temp = ui.geometry.mode == ui.geometry.SEPARATE_WORLDS;
-        (void)ImGui::Checkbox("Use Separate Transfer Functions", &temp);
+        (void)ImGui::Checkbox("Use Separate Transfer Functions###ui.tfn.mode", &temp);
         ui.tfn.mode = temp ? ui.tfn.SEPARATE_TRANSFER_FUNCTIONS : ui.tfn.SAME_TRANSFER_FUNCTION;
       }
     } ImGui::PopEnabled(/* ui.geometry.mode == ui.geometry.SAME_WORLD */);
-    if (ImGui::Button("Start Python Co-Process")) {
-      startCoProcess();
-      ui.coprocess.state = ui.coprocess.STARTED;
+    if (ImGui::Button("Start Python Co-Process###ui.coprocess.started.task")) {
+      ui.coprocess.state = ui.coprocess.STARTED_ACTIVE;
+      ui.coprocess.started.task = std::make_unique<Task>([this]() {
+        startCoProcess();
+        ui.coprocess.state = ui.coprocess.STARTED;
+      });
     }
   } ImGui::PopEnabled(/* ui.coprocess.state == ui.coprocess.INITED */);
 
   ImGui::PushEnabled(ui.coprocess.state == ui.coprocess.STARTED); {
-    if (ImGui::Button("Load Data in Co-Process")) {
-      loadInCoProcess();
-      ui.coprocess.state = ui.coprocess.LOADED;
+    if (ImGui::Button("Load Data in Co-Process###ui.coprocess.loaded.task")) {
+      ui.coprocess.state = ui.coprocess.LOADED_ACTIVE;
+      ui.coprocess.loaded.task = std::make_unique<Task>([this]() {
+        loadInCoProcess();
+        ui.coprocess.state = ui.coprocess.LOADED;
+      });
+    }
+    {
+      float temp{ui.coprocess.loaded.percent};
+      ImGui::ProgressBar(temp);
     }
   } ImGui::PopEnabled(/* ui.coprocess.state == ui.coprocess.STARTED */);
 
   ImGui::PushEnabled(ui.coprocess.state == ui.coprocess.LOADED); {
-    if (ImGui::Button("Transfer Data from Co-Process")) {
-      transferFromCoProcess();
-      ui.coprocess.state = ui.coprocess.TRANSFERRED;
+    if (ImGui::Button("Transfer Data from Co-Process###ui.coprocess.transferred.task")) {
+      ui.coprocess.state = ui.coprocess.TRANSFERRED_ACTIVE;
+      ui.coprocess.transferred.task = std::make_unique<Task>([this]() {
+        transferFromCoProcess();
+        ui.coprocess.state = ui.coprocess.TRANSFERRED;
+      });
+    }
+    {
+      float temp{ui.coprocess.transferred.percent};
+      ImGui::ProgressBar(temp);
     }
   } ImGui::PopEnabled(/* ui.coprocess.state == ui.coprocess.LOADED */);
 
   ImGui::PushEnabled(ui.coprocess.state == ui.coprocess.TRANSFERRED); {
-    if (ImGui::Button("Create Geometry")) {
-      createGeometry();
-      ui.coprocess.state = ui.coprocess.CREATED;
+    if (ImGui::Button("Create Geometry###ui.coprocess.created.task")) {
+      ui.coprocess.state = ui.coprocess.CREATED_ACTIVE;
+      ui.coprocess.created.task = std::make_unique<Task>([this]() {
+        createGeometry();
+        ui.coprocess.state = ui.coprocess.CREATED;
+      });
+    }
+    {
+      float temp{ui.coprocess.created.percent};
+      ImGui::ProgressBar(temp);
     }
   } ImGui::PopEnabled(/* ui.coprocess.state == ui.coprocess.TRANSFERRED */);
 
   ImGui::PushEnabled(ui.coprocess.state == ui.coprocess.CREATED); {
     {
       bool temp = ui.animation.mode == ui.animation.PLAYING;
-      if (ImGui::Checkbox("Animate", &temp)) {
+      if (ImGui::Checkbox("Animate###ui.animation.mode", &temp)) {
         ui.animation.mode = temp ? ui.animation.PLAYING : ui.animation.STOPPED;
       }
     }
 
     ImGui::PushEnabled(ui.animation.mode == ui.animation.STOPPED); {
-      ImGui::PushID("timestep"); {
+      ImGui::PushID("ui.timestep.index.current"); {
         int temp = (int)ui.timestep.index.current;
         int old = temp;
         if (ImGui::Button("<<")) {
@@ -150,10 +202,10 @@ void PanelMikr::buildUI(void *ImGuiCtx)
         }
         assert(timesteps.count == 0 || (0 <= temp && temp < timesteps.count));
         ui.timestep.index.current = (size_t)temp;
-      } ImGui::PopID(/* "timestep" */);
+      } ImGui::PopID(/* "ui.timestep.index.current" */);
     } ImGui::PopEnabled(/* ui.animation.mode == ui.animation.STOPPED */);
 
-    ImGui::PushID("fps"); { // frames per second
+    ImGui::PushID("ui.animation.fps"); { // frames per second
       int temp = (int)ui.animation.fps;
       if (ImGui::Button("<<")) {
         temp = 1;
@@ -181,7 +233,7 @@ void PanelMikr::buildUI(void *ImGuiCtx)
       }
       assert(1 <= temp && temp <= 60);
       ui.animation.fps = (int)temp;
-    } ImGui::PopID(/* "fps" */);
+    } ImGui::PopID(/* "ui.animation.fps" */);
 
     if (ui.timestep.index.current != ui.timestep.index.previous) {
       if (ui.geometry.mode == ui.geometry.SEPARATE_WORLDS) {
@@ -199,9 +251,12 @@ void PanelMikr::buildUI(void *ImGuiCtx)
   } ImGui::PopEnabled(/* ui.coprocess.state == ui.coprocess.CREATED */);
 
   ImGui::PushEnabled(ui.coprocess.state == ui.coprocess.INITED); {
-    if (ImGui::Button("Stop Python Co-Process")) {
-      stopCoProcess();
-      ui.coprocess.state = ui.coprocess.STOPPED;
+    if (ImGui::Button("Stop Python Co-Process###ui.coprocess.STOPPED")) {
+      ui.coprocess.state = ui.coprocess.STOPPED_ACTIVE;
+      ui.coprocess.stopped.task = std::make_unique<Task>([this]() {
+        stopCoProcess();
+        ui.coprocess.state = ui.coprocess.STOPPED;
+      });
     }
   } ImGui::PopEnabled(/* ui.coprocess.state == ui.coprocess.INITED */);
 
@@ -232,10 +287,19 @@ void PanelMikr::startCoProcess() {
     dup2(fds_stdout[1], 1);
     close(fds_stdout[0]);
     close(fds_stdout[1]);
-    execlp("python3",
-           "python3",
-           "/home/thobson/src/ospray_studio_mikr/studio/plugins/mikr_plugin/plugin_mikr.py",
-           NULL);
+
+    const char *argv[16];
+    size_t i = 0;
+    argv[i++] = "python3";
+    argv[i++] = "/home/thobson/src/ospray_studio_mikr/studio/plugins/mikr_plugin/plugin_mikr.py";
+    if (!ui.coprocess.filename.empty()) {
+      argv[i++] = "--data";
+      argv[i++] = ui.coprocess.filename.c_str();
+    }
+    argv[i++] = NULL;
+
+
+    execvp(argv[0], const_cast<char *const *>(argv));
     perror("execlp");
     exit(0);
 
@@ -264,11 +328,13 @@ void PanelMikr::loadInCoProcess() {
   timesteps.count = temp;
   timesteps.t.resize(temp);
   for (i=0; i<timesteps.count; ++i) {
+    ui.coprocess.loaded.percent = (float)i / (float)timesteps.count;
     fread(&temp, sizeof(temp), 1, coprocess.stdout);
     assert(temp >= 0);
     timesteps.t[i].name.resize(temp, '\0');
     fread(const_cast<char *>(timesteps.t[i].name.data()), 1, temp, coprocess.stdout);
   }
+  ui.coprocess.loaded.percent = 1.0f;
 }
 
 void PanelMikr::transferFromCoProcess() {
@@ -278,6 +344,7 @@ void PanelMikr::transferFromCoProcess() {
   std::fprintf(stderr, "Transfer\n");
 
   for (size_t i=0; i<timesteps.count; ++i) {
+    ui.coprocess.transferred.percent = (float)i / (float)timesteps.count;
     temp = i;
     fwrite(&temp, sizeof(temp), 1, coprocess.stdin);
     fflush(coprocess.stdin);
@@ -347,6 +414,8 @@ void PanelMikr::transferFromCoProcess() {
       timesteps.cell.data.maximum = timesteps.t[i].cell.data.maximum;
     }
   }
+
+  ui.coprocess.transferred.percent = 1.0f;
 }
 
 #define SG_PREFIX(x) ("mikr_" x)
@@ -354,6 +423,7 @@ void PanelMikr::createGeometry() {
   std::fprintf(stderr, "Create\n");
 
   for (size_t i=0; i<timesteps.count; ++i) {
+    ui.coprocess.created.percent = (float)i / (float)timesteps.count;
     if (ui.geometry.mode == ui.geometry.SEPARATE_WORLDS) {
       std::string name(128, '\0');
       std::snprintf(const_cast<char *>(name.data()), 128, SG_PREFIX("world_%s"), timesteps.t[i].name.c_str());
@@ -433,6 +503,8 @@ void PanelMikr::createGeometry() {
   context->frame->traverse<sg::PrintNodes>();
 
   context->refreshScene(true);
+
+  ui.coprocess.created.percent = 1.0f;
 }
 #undef SG_PREFIX
 
