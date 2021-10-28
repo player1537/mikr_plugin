@@ -81,15 +81,6 @@ protected:
       struct {
         std::unique_ptr<Task> task; // ui.coprocess.created.task
         std::atomic<float> percent; // ui.coprocess.created.percent
-        bool done; // ui.coprocess.created.done
-        struct {
-          std::mutex mutex; // ui.coprocess.created.create.mutex
-          std::condition_variable_any condition; // ui.coprocess.created.create.condition
-        } create; // ui.coprocess.created.create
-        struct {
-          std::mutex mutex; // ui.coprocess.created.render.mutex
-          std::condition_variable_any condition; // ui.coprocess.created.render.condition
-        } render; // ui.coprocess.created.render
       } created; // ui.coprocess.created
 
       struct {
