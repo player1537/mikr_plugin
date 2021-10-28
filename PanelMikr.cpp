@@ -8,21 +8,19 @@
 #include "imgui.h"
 #include "imgui_internal.h" // ImGui::PushDisabled, ImGui::PopDisabled
 
-namespace rkcommon {
-namespace tasking {
+#include <thread>
 
 template <>
-struct AsyncTask<void> : AsyncTask<int> {
+struct rkcommon::tasking::AsyncTask<void>
+  : rkcommon::tasking::AsyncTask<int>
+{
   AsyncTask(std::function<void()> fcn)
-    : AsyncTask<int>::AsyncTask([fcn]() {
+    : rkcommon::tasking::AsyncTask<int>::AsyncTask([fcn]() {
       fcn();
       return 0;
     })
   {}
 };
-
-} /* } namespace tasking */
-} /* } namespace rkcommon */
 
 namespace ImGui {
 
@@ -39,6 +37,8 @@ IMGUI_API void PopEnabled() {
 namespace ospray {
 namespace mikr_plugin {
 
+#define D(x) do { std::fprintf(stderr, "D:%s:%d: %s\n", __FILE__, __LINE__, #x); x; } while (0)
+
 PanelMikr::PanelMikr(
   std::shared_ptr<StudioContext> context,
   std::string optDefaultFilename
@@ -53,6 +53,7 @@ PanelMikr::PanelMikr(
   ui.coprocess.transferred.task = nullptr;
   ui.coprocess.transferred.percent = 0.0f;
   ui.coprocess.created.task = nullptr;
+  ui.coprocess.created.done = false;
   ui.coprocess.created.percent = 0.0f;
   ui.geometry.mode = ui.geometry.SAME_WORLD;
   ui.tfn.mode = ui.tfn.SAME_TRANSFER_FUNCTION;
@@ -87,16 +88,15 @@ void PanelMikr::buildUI(void *ImGuiCtx)
       std::string temp{ui.coprocess.filename};
       temp.resize(1024, '\0');
       ImGuiInputTextFlags flags{0};
-      (void)ImGui::InputText("###ui.coprocess.filename",
-                             const_cast<char *>(temp.data()),
-                             1024,
-                             flags);
-      ui.coprocess.filename = temp;
+      if (ImGui::InputText("###ui.coprocess.filename", const_cast<char *>(temp.data()), 1024, flags)) {
+        ui.coprocess.filename = temp;
+      }
     }
     {
       bool temp = ui.geometry.mode == ui.geometry.SEPARATE_WORLDS;
-      (void)ImGui::Checkbox("Use Separate Worlds###ui.geometry.mode", &temp);
-      ui.geometry.mode = temp ? ui.geometry.SEPARATE_WORLDS : ui.geometry.SAME_WORLD;
+      if (ImGui::Checkbox("Use Separate Worlds###ui.geometry.mode", &temp)) {
+        ui.geometry.mode = temp ? ui.geometry.SEPARATE_WORLDS : ui.geometry.SAME_WORLD;
+      }
     }
     if (ui.geometry.mode == ui.geometry.SEPARATE_WORLDS) {
       ui.tfn.mode = ui.tfn.SEPARATE_TRANSFER_FUNCTIONS;
@@ -104,15 +104,18 @@ void PanelMikr::buildUI(void *ImGuiCtx)
     ImGui::PushEnabled(ui.geometry.mode == ui.geometry.SAME_WORLD); {
       {
         bool temp = ui.tfn.mode == ui.tfn.SEPARATE_TRANSFER_FUNCTIONS;
-        (void)ImGui::Checkbox("Use Separate Transfer Functions###ui.tfn.mode", &temp);
-        ui.tfn.mode = temp ? ui.tfn.SEPARATE_TRANSFER_FUNCTIONS : ui.tfn.SAME_TRANSFER_FUNCTION;
+        if (ImGui::Checkbox("Use Separate Transfer Functions###ui.tfn.mode", &temp)) {
+          ui.tfn.mode = temp ? ui.tfn.SEPARATE_TRANSFER_FUNCTIONS : ui.tfn.SAME_TRANSFER_FUNCTION;
+        }
       }
     } ImGui::PopEnabled(/* ui.geometry.mode == ui.geometry.SAME_WORLD */);
     if (ImGui::Button("Start Python Co-Process###ui.coprocess.started.task")) {
       ui.coprocess.state.next = ui.coprocess.state.STARTED_ACTIVE;
       std::fprintf(stderr, "Before startCoProcess task\n");
       ui.coprocess.started.task = std::make_unique<Task>([this]() {
-        std::fprintf(stderr, "Inside startCoProcess task\n");
+        std::ostringstream ss;
+        ss << std::this_thread::get_id();
+        std::fprintf(stderr, "Inside startCoProcess task: thread id = %s\n", ss.str().c_str());
         startCoProcess();
         ui.coprocess.state.next = ui.coprocess.state.STARTED;
         std::fprintf(stderr, "After startCoProcess task\n");
@@ -152,14 +155,44 @@ void PanelMikr::buildUI(void *ImGuiCtx)
     if (ImGui::Button("Create Geometry###ui.coprocess.created.task")) {
       ui.coprocess.state.next = ui.coprocess.state.CREATED_ACTIVE;
 
-      ui.coprocess.created.mutex.lock();
+      {
+        D(ui.coprocess.created.render.mutex.lock());
+      }
       ui.coprocess.created.task = std::make_unique<Task>([this]() {
         createGeometry();
       });
-      ui.coprocess.created.condition.wait(ui.coprocess.created.mutex);
+
+      {
+        D(ui.coprocess.created.render.condition.wait(ui.coprocess.created.render.mutex));
+      }
     }
     if (ui.coprocess.state.current == ui.coprocess.state.CREATED_ACTIVE) {
-      ui.coprocess.created.condition.wait(ui.coprocess.created.mutex);
+      {
+        D(ui.coprocess.created.create.mutex.lock());
+        D(ui.coprocess.created.create.condition.notify_one());
+        D(ui.coprocess.created.create.mutex.unlock());
+      }
+
+      {
+        D(ui.coprocess.created.render.condition.wait(ui.coprocess.created.render.mutex));
+      }
+
+      if (ui.coprocess.created.done) {
+        {
+          D(ui.coprocess.created.render.mutex.unlock());
+        }
+
+        {
+          D(ui.coprocess.created.create.mutex.lock());
+          D(ui.coprocess.created.create.condition.notify_one());
+          D(ui.coprocess.created.create.mutex.unlock());
+        }
+
+        D(ui.coprocess.created.task->wait());
+        ui.coprocess.created.task = nullptr;
+
+        ui.coprocess.state.next = ui.coprocess.state.CREATED;
+      }
     }
     {
       float temp{ui.coprocess.created.percent};
@@ -195,7 +228,11 @@ void PanelMikr::buildUI(void *ImGuiCtx)
           temp = timesteps.count - 1;
         }
 
-        if (ui.coprocess.state.current == ui.coprocess.state.CREATED && ui.animation.mode == ui.animation.PLAYING) {
+        bool shouldAnimate = 
+          ui.coprocess.state.current == ui.coprocess.state.CREATED &&
+          ui.animation.mode == ui.animation.PLAYING;
+
+        if (shouldAnimate) {
           ui.animation.time.current = clock::now();
           using namespace std::literals::chrono_literals;
 
@@ -443,14 +480,26 @@ void PanelMikr::transferFromCoProcess() {
 void PanelMikr::createGeometry() {
   std::fprintf(stderr, "Create\n");
 
-  ui.coprocess.created.mutex.lock();
+  {
+    D(ui.coprocess.created.create.mutex.lock());
+  }
+
+  context->frame->pauseRendering = true;
+  context->frame->cancelFrame();
+  context->frame->waitOnFrame();
+
+  {
+    D(ui.coprocess.created.render.mutex.lock());
+    D(ui.coprocess.created.render.condition.notify_one());
+    D(ui.coprocess.created.render.mutex.unlock());
+  }
 
   for (size_t i=0; i<timesteps.count; ++i) {
+    {
+      D(ui.coprocess.created.create.condition.wait(ui.coprocess.created.create.mutex));
+    }
+
     ui.coprocess.created.percent = (float)i / (float)timesteps.count;
-    ui.coprocess.created.condition.notify_one();
-    ui.coprocess.created.mutex.unlock();
-    std::this_thread::yield();
-    ui.coprocess.created.mutex.lock();
 
     if (ui.geometry.mode == ui.geometry.SEPARATE_WORLDS) {
       std::string name(128, '\0');
@@ -518,6 +567,12 @@ void PanelMikr::createGeometry() {
       } tfn.commit();
       world.add(tfn);
     } world.commit();
+
+    if (i + 1 < timesteps.count) {
+      D(ui.coprocess.created.render.mutex.lock());
+      D(ui.coprocess.created.render.condition.notify_one());
+      D(ui.coprocess.created.render.mutex.unlock());
+    }
   }
 
   if (ui.geometry.mode == ui.geometry.SEPARATE_WORLDS) {
@@ -531,21 +586,43 @@ void PanelMikr::createGeometry() {
     throw NotImplemented();
   }
 
-  context->frame->traverse<sg::PrintNodes>();
+  D(context->frame->traverse<sg::PrintNodes>());
 
-  context->refreshScene(true);
+  D(context->refreshScene(true));
 
-  ui.coprocess.created.percent = 1.0f;
-  ui.coprocess.state.next = ui.coprocess.state.CREATED;
+  std::cerr << std::this_thread::get_id() << std::endl;
 
-  ui.coprocess.created.condition.notify_one();
-  ui.coprocess.created.mutex.unlock();
+  {
+    D(ui.coprocess.created.percent = 1.0f);
+    D(ui.coprocess.created.done = true);
+  }
+
+  {
+    D(ui.coprocess.created.render.mutex.lock());
+    D(ui.coprocess.created.render.condition.notify_one());
+    D(ui.coprocess.created.render.mutex.unlock());
+  }
+
+  context->frame->pauseRendering = false;
+
+  {
+    D(ui.coprocess.created.create.condition.wait(ui.coprocess.created.create.mutex));
+  }
+
+  {
+    D(ui.coprocess.created.create.mutex.unlock());
+  }
+
+
+  D(return);
 }
 #undef SG_PREFIX
 
 void PanelMikr::stopCoProcess() {
   std::fprintf(stderr, "Stop\n");
 }
+
+#undef D
 
 }  // namespace mikr_plugin
 }  // namespace ospray
