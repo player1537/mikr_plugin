@@ -1,38 +1,16 @@
-// Copyright 2009-2020 Intel Corporation
+// Copyright 2009-2021 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 
 #include "PanelMikr.h"
 
-#include "sg/visitors/PrintNodes.h"
-
-#include "imgui.h"
-#include "imgui_internal.h" // ImGui::PushDisabled, ImGui::PopDisabled
-
+#include <functional>
 #include <thread>
 
-template <>
-struct rkcommon::tasking::AsyncTask<void>
-  : rkcommon::tasking::AsyncTask<int>
-{
-  AsyncTask(std::function<void()> fcn)
-    : rkcommon::tasking::AsyncTask<int>::AsyncTask([fcn]() {
-      fcn();
-      return 0;
-    })
-  {}
-};
+#include "imgui.h"
+#include "hacks/hack_imgui.h" // ImGui::PushEnabled, ImGui::PopEnabled
+#include "hacks/hack_rkcommon.h" // rkcommon::tasking::AsyncTask<void>
 
-namespace ImGui {
-
-IMGUI_API void PushEnabled(bool enabled = true) {
-  PushDisabled(!enabled);
-}
-
-IMGUI_API void PopEnabled() {
-  PopDisabled();
-}
-
-} /* } namespace ImGui */
+#include "sg/visitors/PrintNodes.h"
 
 namespace ospray {
 namespace mikr_plugin {
@@ -47,11 +25,11 @@ PanelMikr::PanelMikr(
   ui.coprocess.state.next = ui.coprocess.state.INITED;
   ui.coprocess.state.current = ui.coprocess.state.next;
   ui.coprocess.loaded.task = nullptr;
-  ui.coprocess.loaded.percent = 0.0f;
+  ui.coprocess.loaded.completed = 0;
   ui.coprocess.transferred.task = nullptr;
-  ui.coprocess.transferred.percent = 0.0f;
+  ui.coprocess.transferred.completed = 0;
   ui.coprocess.created.task = nullptr;
-  ui.coprocess.created.percent = 0.0f;
+  ui.coprocess.created.completed = 0;
   ui.geometry.mode = ui.geometry.SAME_WORLD;
   ui.tfn.mode = ui.tfn.SAME_TRANSFER_FUNCTION;
   ui.timestep.index.current = 0;
@@ -65,6 +43,7 @@ PanelMikr::PanelMikr(
   coprocess.stdin = nullptr;
   coprocess.stdout = nullptr;
   timesteps.count = 0;
+  timesteps.nbytes = 0;
   timesteps.t.clear();
 }
 
@@ -128,10 +107,10 @@ void PanelMikr::buildUI(void *ImGuiCtx)
         ui.coprocess.state.next = ui.coprocess.state.LOADED;
       });
     }
-    {
-      float temp{ui.coprocess.loaded.percent};
-      ImGui::ProgressBar(temp);
-    }
+    // {
+    //   float temp{ui.coprocess.loaded.percent};
+    //   ImGui::ProgressBar(temp);
+    // }
   } ImGui::PopEnabled(/* ui.coprocess.state.current == ui.coprocess.state.STARTED */);
 
   ImGui::PushEnabled(ui.coprocess.state.current == ui.coprocess.state.LOADED); {
@@ -143,8 +122,14 @@ void PanelMikr::buildUI(void *ImGuiCtx)
       });
     }
     {
-      float temp{ui.coprocess.transferred.percent};
-      ImGui::ProgressBar(temp);
+      if (timesteps.count == 0) {
+        ImGui::ProgressBar(0.0f, ImVec2(-FLT_MIN, 0), "Not Started");
+      } else {
+        size_t completed{ui.coprocess.transferred.completed};
+        std::string temp(1024, '\0');
+        std::snprintf(const_cast<char *>(temp.data()), 64, "%zu/%zu (%'zuMB)", completed, timesteps.count, timesteps.nbytes / 1024ul / 1024ul);
+        ImGui::ProgressBar((float)completed / (float)timesteps.count, ImVec2(-FLT_MIN, 0), temp.c_str());
+      }
     }
   } ImGui::PopEnabled(/* ui.coprocess.state.current == ui.coprocess.state.LOADED */);
 
@@ -170,9 +155,13 @@ void PanelMikr::buildUI(void *ImGuiCtx)
         context->refreshScene(true);
       }
     }
-    {
-      float temp{ui.coprocess.created.percent};
-      ImGui::ProgressBar(temp);
+    if (timesteps.count == 0) {
+      ImGui::ProgressBar(0.0f, ImVec2(-FLT_MIN, 0), "Not Started");
+    } else {
+      size_t completed{ui.coprocess.created.completed};
+      std::string temp(1024, '\0');
+      std::snprintf(const_cast<char *>(temp.data()), 64, "%zu/%zu", completed, timesteps.count);
+      ImGui::ProgressBar((float)completed / (float)timesteps.count, ImVec2(-FLT_MIN, 0), temp.c_str());
     }
   } ImGui::PopEnabled(/* ui.coprocess.state.current == ui.coprocess.state.TRANSFERRED */);
 
@@ -357,18 +346,18 @@ void PanelMikr::loadInCoProcess() {
   fwrite(&temp, sizeof(temp), 1, coprocess.stdin);
   fflush(coprocess.stdin);
 
-  fread(&temp, sizeof(temp), 1, coprocess.stdout);
+  timesteps.nbytes += fread(&temp, 1, sizeof(temp), coprocess.stdout);
   assert(temp >= 0);
   timesteps.count = temp;
   timesteps.t.resize(temp);
   for (i=0; i<timesteps.count; ++i) {
-    ui.coprocess.loaded.percent = (float)i / (float)timesteps.count;
-    fread(&temp, sizeof(temp), 1, coprocess.stdout);
+    ui.coprocess.loaded.completed = i;
+    timesteps.nbytes += fread(&temp, sizeof(temp), 1, coprocess.stdout);
     assert(temp >= 0);
     timesteps.t[i].name.resize(temp, '\0');
-    fread(const_cast<char *>(timesteps.t[i].name.data()), 1, temp, coprocess.stdout);
+    timesteps.nbytes += fread(const_cast<char *>(timesteps.t[i].name.data()), 1, temp, coprocess.stdout);
   }
-  ui.coprocess.loaded.percent = 1.0f;
+  ui.coprocess.loaded.completed = timesteps.count;
 }
 
 void PanelMikr::transferFromCoProcess() {
@@ -378,50 +367,50 @@ void PanelMikr::transferFromCoProcess() {
   std::fprintf(stderr, "Transfer\n");
 
   for (size_t i=0; i<timesteps.count; ++i) {
-    ui.coprocess.transferred.percent = (float)i / (float)timesteps.count;
+    ui.coprocess.transferred.completed = i;
     temp = i;
-    fwrite(&temp, sizeof(temp), 1, coprocess.stdin);
+    timesteps.nbytes += fwrite(&temp, 1, sizeof(temp), coprocess.stdin);
     fflush(coprocess.stdin);
 
-    fread(&temp, sizeof(temp), 1, coprocess.stdout);
+    timesteps.nbytes += fread(&temp, 1, sizeof(temp), coprocess.stdout);
     assert(temp >= 0);
     timesteps.t[i].vertex.position.count = temp;
     
-    fread(&temp, sizeof(temp), 1, coprocess.stdout);
+    timesteps.nbytes += fread(&temp, 1, sizeof(temp), coprocess.stdout);
     assert(temp >= 0);
     timesteps.t[i].index.count = 8 * temp;
     timesteps.t[i].cell.index.count = temp;
     timesteps.t[i].cell.type.count = temp;
     timesteps.t[i].cell.data.count = temp;
 
-    fread(&temp, sizeof(temp), 1, coprocess.stdout);
+    timesteps.nbytes += fread(&temp, 1, sizeof(temp), coprocess.stdout);
     assert(temp >= 0);
-    timesteps.t[i].vertex.position.data = (vec3f *)std::malloc(2 * temp); // XXX(th): Don't malloc 2x buffer size
-    nread = fread(timesteps.t[i].vertex.position.data, 1, temp, coprocess.stdout);
+    timesteps.t[i].vertex.position.data = (vec3f *)std::malloc(temp);
+    timesteps.nbytes += fread(timesteps.t[i].vertex.position.data, 1, temp, coprocess.stdout);
     std::fprintf(stderr, "Read vertex.position\n");
 
     fread(&temp, sizeof(temp), 1, coprocess.stdout);
     assert(temp >= 0);
-    timesteps.t[i].index.data = (uint32_t *)std::malloc(2 * temp); // XXX(th): Don't malloc 2x buffer size
-    nread = fread(timesteps.t[i].index.data, 1, temp, coprocess.stdout);
+    timesteps.t[i].index.data = (uint32_t *)std::malloc(temp);
+    timesteps.nbytes += fread(timesteps.t[i].index.data, 1, temp, coprocess.stdout);
     std::fprintf(stderr, "Read index\n");
 
-    fread(&temp, sizeof(temp), 1, coprocess.stdout);
+    timesteps.nbytes += fread(&temp, sizeof(temp), 1, coprocess.stdout);
     assert(temp >= 0);
-    timesteps.t[i].cell.index.data = (uint32_t *)std::malloc(2 * temp); // XXX(th): Don't malloc 2x buffer size
-    nread = fread(timesteps.t[i].cell.index.data, 1, temp, coprocess.stdout);
+    timesteps.t[i].cell.index.data = (uint32_t *)std::malloc(temp);
+    timesteps.nbytes += fread(timesteps.t[i].cell.index.data, 1, temp, coprocess.stdout);
     std::fprintf(stderr, "Read cell.index\n");
 
-    fread(&temp, sizeof(temp), 1, coprocess.stdout);
+    timesteps.nbytes += fread(&temp, sizeof(temp), 1, coprocess.stdout);
     assert(temp >= 0);
-    timesteps.t[i].cell.type.data = (uint8_t *)std::malloc(2 * temp); // XXX(th): Don't malloc 2x buffer size
-    nread = fread(timesteps.t[i].cell.type.data, 1, temp, coprocess.stdout);
+    timesteps.t[i].cell.type.data = (uint8_t *)std::malloc(temp);
+    timesteps.nbytes += fread(timesteps.t[i].cell.type.data, 1, temp, coprocess.stdout);
     std::fprintf(stderr, "Read cell.type\n");
 
-    fread(&temp, sizeof(temp), 1, coprocess.stdout);
+    timesteps.nbytes += fread(&temp, sizeof(temp), 1, coprocess.stdout);
     assert(temp >= 0);
-    timesteps.t[i].cell.data.data = (float *)std::malloc(2 * temp); // XXX(th): Don't malloc 2x buffer size
-    nread = fread(timesteps.t[i].cell.data.data, 1, temp, coprocess.stdout);
+    timesteps.t[i].cell.data.data = (float *)std::malloc(temp);
+    timesteps.nbytes += fread(timesteps.t[i].cell.data.data, 1, temp, coprocess.stdout);
     std::fprintf(stderr, "Read cell.data\n");
 
     timesteps.t[i].cell.data.minimum = timesteps.t[i].cell.data.data[0];
@@ -449,7 +438,7 @@ void PanelMikr::transferFromCoProcess() {
     }
   }
 
-  ui.coprocess.transferred.percent = 1.0f;
+  ui.coprocess.transferred.completed = timesteps.count;
 }
 
 #define SG_PREFIX(x) ("mikr_" x)
@@ -457,7 +446,7 @@ void PanelMikr::createGeometry() {
   std::fprintf(stderr, "Create\n");
 
   for (size_t i=0; i<timesteps.count; ++i) {
-    ui.coprocess.created.percent = (float)i / (float)timesteps.count;
+    ui.coprocess.created.completed = i;
 
     if (ui.geometry.mode == ui.geometry.SEPARATE_WORLDS) {
       std::string name(128, '\0');
@@ -538,7 +527,7 @@ void PanelMikr::createGeometry() {
     throw NotImplemented();
   }
 
-  ui.coprocess.created.percent = 1.0f;
+  ui.coprocess.created.completed = timesteps.count;
 
   context->frame->traverse<sg::PrintNodes>();
 }

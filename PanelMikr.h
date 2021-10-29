@@ -1,4 +1,4 @@
-// Copyright 2009-2020 Intel Corporation
+// Copyright 2009-2021 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 
 #pragma once
@@ -70,17 +70,17 @@ protected:
 
       struct {
         std::unique_ptr<Task> task; // ui.coprocess.loaded.task
-        std::atomic<float> percent; // ui.coprocess.loaded.percent
+        std::atomic<size_t> completed; // ui.coprocess.loaded.completed
       } loaded; // ui.coprocess.loaded
 
       struct {
         std::unique_ptr<Task> task; // ui.coprocess.transferred.task
-        std::atomic<float> percent; // ui.coprocess.transferred.percent
+        std::atomic<size_t> completed; // ui.coprocess.transferred.completed
       } transferred; // ui.coprocess.transferred
 
       struct {
         std::unique_ptr<Task> task; // ui.coprocess.created.task
-        std::atomic<float> percent; // ui.coprocess.created.percent
+        std::atomic<size_t> completed; // ui.coprocess.created.completed
       } created; // ui.coprocess.created
 
       struct {
@@ -133,6 +133,7 @@ protected:
 
   struct {
     size_t count; // timesteps.count
+    size_t nbytes; // timesteps.nbytes
 
     struct {
       struct {
