@@ -1,6 +1,7 @@
-ospray_ref=devel
-studio_ref=devel
-mikr_plugin_ref=devel
+ospray_ref=v2.7.1
+studio_ref=v0.8.1
+mikr_plugin_ref=master
+
 studio_config+=(
     -DBUILD_PLUGINS:BOOL=ON
     -DBUILD_PLUGIN_EXAMPLE:BOOL=ON

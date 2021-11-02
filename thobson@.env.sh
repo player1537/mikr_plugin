@@ -1,15 +1,3 @@
-ospray_git=file://${HOME:?}/git/vis-gitlab.an.intel.com/renderkit/ospray
-studio_git=file://${HOME:?}/git/vis-gitlab.an.intel.com/renderkit/ospray_studio
-mikr_plugin_git=file://${HOME:?}/git/vis-gitlab.an.intel.com/thobson/mikr_plugin
-
-studio_config+=(
-    -DCMAKE_BUILD_TYPE:STRING=Debug
-)
-ospray_config+=(
-    -DCMAKE_BUILD_TYPE:STRING=Debug
-    -DDEPENDENCIES_BUILD_TYPE:STRING=Debug
-)
-
 go-nofree-build() {
     printf $'void free(void *v) { (void)v; }\n' | \
     gcc -Wall -fPIC -shared -x c -nostdlib - -o "${root:?}/nofree.so"

@@ -8,7 +8,7 @@ source go.git.sh
 
 mikr_plugin=${studio:?}/plugins/mikr_plugin
 mikr_plugin_source=${mikr_plugin:?}
-mikr_plugin_git=git@vis-gitlab.an.intel.com:thobson/mikr_plugin.git
+mikr_plugin_git=https://github.com/player1537/mikr_plugin.git
 mikr_plugin_ref=
 
 go--mikr_plugin-pollute() {
