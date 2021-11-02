@@ -32,7 +32,7 @@ go--clean-ref() {
     if read -p 'Continue? [y/N] '; then
         case "$REPLY" in
         ([Yy]) rm -rfv "${_clean[@]}";;
-        (*) printf $'Cancelled\n' >&2;;
+        (*) printf $'Cancelled\n' >&2; return 1;;
         esac
     fi
 }
