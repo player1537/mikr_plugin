@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
-[ -z "${git+isset}" ] || return
+[ -n "${__GO_GIT_SH__+isset}" ] || {
+__GO_GIT_SH__=
 
 git=
 source=
@@ -18,3 +19,5 @@ go--git-clone() {
         fi
     fi
 }
+
+}  # __GO_GIT_SH__

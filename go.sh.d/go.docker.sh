@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+[ -n "${__GO_DOCKER_SH__+isset}" ] || {
+__GO_DOCKER_SH__=
+
 tag=${project:?}_${USER:?}:latest
 name=${project:?}_${USER:?}
 dockerfile=
@@ -60,3 +63,5 @@ go--docker-exec() (
         "${name:?}" \
         "$@"
 )
+
+}  # __GO_DOCKER_SH__

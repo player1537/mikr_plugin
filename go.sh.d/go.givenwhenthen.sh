@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
-[ -z "${givenwhenthen+isset}" ] || return
+[ -n "${__GO_GIVENWHENTHEN_SH__+isset}" ] || {
+__GO_GIVENWHENTHEN_SH__=
 
 givenwhenthen=
 givenwhenthen_namespace=_givenwhenthen
@@ -65,3 +66,5 @@ go--givenwhenthen--repl() {
     (n) exit 1;;
     esac
 }
+
+}  # __GO_GIVENWHENTHEN_SH__

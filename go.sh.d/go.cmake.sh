@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
-[ -z "${cmake+isset}" ] || return
+[ -n "${__GO_CMAKE_SH__+isset}" ] || {
+__GO_CMAKE_SH__=
 
 cmake=
 config=()
@@ -25,3 +26,5 @@ go--cmake-install() {
         VERBOSE=1 \
         install
 }
+
+}  # __GO_CMAKE_SH__

@@ -3,18 +3,35 @@
 die() { printf $'Error: %s\n' "$*" >&2; exit 1; }
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)
+PATH=${root:?}/go.sh.d${PATH:+:${PATH:?}}
 project=${root##*/}
 
-source "${root:?}/go.sh.d/go.ospray.sh" "$@"
+source go.clean.sh
+go--clean-pollute \
+    go-clean \
+    go-distclean
+
+source go.exec.sh
+go--exec-pollute \
+    go-exec
+
+source go.package.sh
+go--package-pollute \
+    go-package
+
+source go.ospray.sh
 go--ospray-pollute \
     go-ospray \
     go-ospray-clone \
     go-ospray-clean \
     go-ospray-configure \
     go-ospray-build \
-    go-ospray-exec
+    go-ospray-exec \
+    \$clean \
+    \$distclean \
+    \$exec
 
-source "${root:?}/go.sh.d/go.studio.sh" "$@"
+source go.studio.sh
 go--studio-pollute \
     go-studio \
     go-studio-clone \
@@ -22,31 +39,26 @@ go--studio-pollute \
     go-studio-configure \
     go-studio-build \
     go-studio-install \
-    go-studio-exec
+    go-studio-exec \
+    \$clean \
+    \$distclean \
+    \$exec
 
-source "${root:?}/go.sh.d/go.spack.sh" "$@"
+source go.spack.sh
 go--spack-pollute \
     go-spack \
     go-spack-clone \
     go-spack-install \
-    go-spack-exec
+    go-spack-exec \
+    \$clean \
+    \$distclean \
+    \$package \
+    \$exec
 
-source "${root:?}/go.sh.d/go.mikr_plugin.sh" "$@"
+source go.mikr_plugin.sh
 go--mikr_plugin-pollute \
     go-mikr_plugin \
     go-mikr_plugin-clone
-
-go-exec() {
-    go ospray exec \
-    go studio exec \
-    go spack exec \
-    "$@"
-}
-
-go-clean() {
-    go studio clean &&
-    go ospray clean
-}
 
 go-buildall() (
     source "${root:?}/go.sh.d/go.makefile.sh"
@@ -101,19 +113,6 @@ go-buildall() (
 go-parbuildall() {
     MAKEFLAGS=-j$(nproc) go buildall
 }
-
-go-package() (
-    shopt -s nullglob
-    tar zcvf \
-        "${root:?}/${project:?}.tar.gz" \
-        --dereference \
-        --xform "s!^!${project:?}/!" \
-        go.sh \
-        env.sh \
-        *.env.sh \
-        go.sh.d/go.*.sh \
-        spack.yaml
-)
 
 go() {
     case "${1:-}" in

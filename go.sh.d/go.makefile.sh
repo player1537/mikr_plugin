@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
-[ -z "${makefile+isset}" ] || return
+[ -n "${__GO_MAKEFILE_SH__+isset}" ] || {
+__GO_MAKEFILE_SH__=
 
 makefile=${root:?}/Makefile
 makefile_namespace=_makefile
@@ -72,3 +73,5 @@ go--makefile-rule() {
     (RULEINT) printf -v "${makefile_namespace:?}_state" $'%s' "RULE";;
     esac
 }
+
+}  # __GO_MAKEFILE_SH__

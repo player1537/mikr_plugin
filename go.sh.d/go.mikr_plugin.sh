@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 
-[ -z "${mikr_plugin+isset}" ] || return
+[ -n "${__GO_MIKR_PLUGIN_SH__+isset}" ] || {
+__GO_MIKR_PLUGIN_SH__=
 
-source "${root:?}/go.sh.d/go.studio.sh" "$@"
-source "${root:?}/go.sh.d/go.git.sh" "$@"
+source go.studio.sh
+source go.git.sh
 
 mikr_plugin=${studio:?}/plugins/mikr_plugin
 mikr_plugin_source=${mikr_plugin:?}
@@ -25,3 +26,5 @@ go--mikr_plugin-clone() {
     ref=${mikr_plugin_ref:-} \
     go--git-clone
 }
+
+}  # __GO_MIKR_PLUGIN_SH__

@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+[ -n "${__GO_PYTHON_SH__+isset}" ] || {
+__GO_PYTHON_SH__=
+
 python=${root:?}/python
 python_source=${python:?}
 python_git=https://github.com/python/cpython.git
@@ -46,3 +49,5 @@ go--python-exec() {
     PATH=${python_stage:?}/bin${PATH:+:${PATH:?}} \
     "$@"
 }
+
+}  # __GO_PYTHON_SH__
